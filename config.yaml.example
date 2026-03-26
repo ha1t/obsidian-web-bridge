@@ -1,0 +1,5 @@
+# Obsidian Web Bridge 設定ファイル
+vault_path: /path/to/your/ObsidianVault
+port: 18484
+api_key: "change-me-to-a-secure-key"
+bind: "0.0.0.0"
