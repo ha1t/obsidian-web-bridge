@@ -12,6 +12,7 @@ type Config struct {
 	Port      int    `yaml:"port"`
 	APIKey    string `yaml:"api_key"`
 	Bind      string `yaml:"bind"`
+	Server    string `yaml:"server"`
 }
 
 func Load(path string) (*Config, error) {
