@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/ha1t/obsidian-web-bridge/config"
 	"github.com/spf13/cobra"
@@ -33,10 +34,24 @@ func init() {
 }
 
 func loadClientConfig() *config.Config {
-	path := clientCfgPath
-	if path == "" {
-		path = "config.yaml"
+	if clientCfgPath != "" {
+		cfg, err := config.Load(clientCfgPath)
+		if err != nil {
+			return nil
+		}
+		return cfg
 	}
+
+	// バイナリ本体のディレクトリからconfig.yamlを探す
+	exe, err := os.Executable()
+	if err != nil {
+		return nil
+	}
+	exe, err = filepath.EvalSymlinks(exe)
+	if err != nil {
+		return nil
+	}
+	path := filepath.Join(filepath.Dir(exe), "config.yaml")
 	cfg, err := config.Load(path)
 	if err != nil {
 		return nil
