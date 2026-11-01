@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -23,7 +24,35 @@ const (
 	msgDailyNotesOnly = DailyNotesDir + " には append_daily_memo で Memo 欄に追記してください"
 	msgHashMismatch   = "別の場所で編集されています。read_note で読み直してから update_note してください"
 	msgDailyCreated   = "DailyNote を新しく作成しました。他の端末への反映は次の同期（最長1時間）までかかります"
+	msgUnsafeName     = "ファイル名に使えない文字が含まれています（\\ : * ? \" < > | や末尾のドット・空白、CON などの予約名は使えません）。別の名前にしてください"
+	msgNameTooLong    = "ファイル名が長すぎます。タイトルを短くしてください"
+	msgCreatedRemoved = "created 行が消えています。read_note の内容の frontmatter を保ったまま更新してください"
 )
+
+// windowsReserved は Windows で使えないデバイス名（拡張子を除いた部分を大文字小文字を区別せず比べる）。
+var windowsReserved = map[string]bool{
+	"CON": true, "PRN": true, "AUX": true, "NUL": true,
+	"COM1": true, "COM2": true, "COM3": true, "COM4": true, "COM5": true, "COM6": true, "COM7": true, "COM8": true, "COM9": true,
+	"LPT1": true, "LPT2": true, "LPT3": true, "LPT4": true, "LPT5": true, "LPT6": true, "LPT7": true, "LPT8": true, "LPT9": true,
+}
+
+// checkSafeName は clean の各要素が Windows / macOS の端末でも同期できる名前かを判定する。
+// Vault は複数の OS で同期されるため、Linux では作れても他の端末で壊れる名前を拒否する。
+func checkSafeName(clean string) error {
+	for _, elem := range strings.Split(clean, "/") {
+		if strings.ContainsAny(elem, `\:*?"<>|`) || strings.ContainsFunc(elem, func(r rune) bool { return r < 0x20 }) {
+			return &userError{msg: msgUnsafeName}
+		}
+		if strings.HasSuffix(elem, ".") || strings.HasSuffix(elem, " ") {
+			return &userError{msg: msgUnsafeName}
+		}
+		stem, _, _ := strings.Cut(elem, ".")
+		if windowsReserved[strings.ToUpper(strings.TrimRight(stem, " "))] {
+			return &userError{msg: msgUnsafeName}
+		}
+	}
+	return nil
+}
 
 // userError は Claude にそのまま見せる業務エラー。
 type userError struct{ msg string }
@@ -111,7 +140,7 @@ func registerTools(s *mcp.Server, t *tools) {
 	}, t.createNote)
 	addTool(s, &mcp.Tool{
 		Name:        "append_note",
-		Description: "既存のノートに追記します。heading を省略するとノート末尾に、指定するとその見出しのセクション末尾に追記します。frontmatter と既存の本文は変えません。",
+		Description: "既存のノートに追記します。heading を省略するとノート末尾に、指定するとその見出しのセクション末尾に追記します。frontmatter と既存の本文は変えません。content にトップレベルの見出し（# ）は入れず、見出しは ## 以下を使ってください（ノートのセクション構造が崩れるため）。",
 		Annotations: writeAnnotations,
 	}, t.appendNote)
 	addTool(s, &mcp.Tool{
@@ -121,7 +150,7 @@ func registerTools(s *mcp.Server, t *tools) {
 	}, t.updateNote)
 	addTool(s, &mcp.Tool{
 		Name:        "append_daily_memo",
-		Description: DailyNotesDir + "/<日付>.md の # Memo セクションの末尾に追記します。ノートが無ければテンプレートから作ってから追記します。",
+		Description: DailyNotesDir + "/<日付>.md の # Memo セクションの末尾に追記します。ノートが無ければテンプレートから作ってから追記します。content にトップレベルの見出し（# ）は入れず、見出しは ## 以下を使ってください（DailyNote のセクション構造が崩れるため）。",
 		Annotations: writeAnnotations,
 	}, t.appendDailyMemo)
 }
@@ -255,6 +284,8 @@ func noteErr(err error, clean string) error {
 		return userErrf("`%s` はすでに存在します。append_note で追記するか、別のパスを使ってください", clean)
 	case errors.Is(err, vault.ErrHashMismatch):
 		return &userError{msg: msgHashMismatch}
+	case errors.Is(err, syscall.ENAMETOOLONG):
+		return &userError{msg: msgNameTooLong}
 	}
 	return err
 }
@@ -340,6 +371,16 @@ func (t *tools) createNote(_ context.Context, in createNoteIn) (_ pathOut, _ str
 	if err = t.checkWritable(clean); err != nil {
 		return pathOut{}, "", err
 	}
+	if err = checkSafeName(clean); err != nil {
+		return pathOut{}, "", err
+	}
+	existing, err := t.opts.Vault.CaseConflictDir(clean)
+	if err != nil {
+		return pathOut{}, "", noteErr(err, clean)
+	}
+	if existing != "" {
+		return pathOut{}, "", userErrf("フォルダ `%s` が既にあります。大文字小文字を合わせてください", existing)
+	}
 	content := vault.MarshalNote(BuildFrontmatter(in.Frontmatter, clean), in.Body)
 	if err = t.opts.Vault.CreateRaw(clean, content); err != nil {
 		return pathOut{}, "", noteErr(err, clean)
@@ -381,10 +422,27 @@ func (t *tools) updateNote(_ context.Context, in updateNoteIn) (_ updateNoteOut,
 	if err = t.checkWritable(clean); err != nil {
 		return updateNoteOut{}, "", err
 	}
-	if strings.TrimSpace(in.Hash) == "" {
+	if err = requireText("content", in.Content); err != nil {
+		return updateNoteOut{}, "", err
+	}
+	hash := strings.TrimSpace(in.Hash)
+	if hash == "" {
 		return updateNoteOut{}, "", userErrf("hash がありません。read_note で得た hash を渡してください")
 	}
-	if err = t.opts.Vault.ReplaceRaw(clean, in.Content, strings.TrimSpace(in.Hash)); err != nil {
+	// pre-commit フックは created の無いノートを管理しなくなるので、created 行を消す更新は拒否する。
+	// 検査するのは hash が一致した内容だけ。ReplaceRaw も同じ hash で照合するので、
+	// 検査した内容と置き換える内容は同じになる。
+	cur, err := t.opts.Vault.ReadRaw(clean)
+	if err != nil {
+		return updateNoteOut{}, "", noteErr(err, clean)
+	}
+	if cur.Hash != hash {
+		return updateNoteOut{}, "", &userError{msg: msgHashMismatch}
+	}
+	if frontmatterHasCreated(cur.Content) && !frontmatterHasCreated(in.Content) {
+		return updateNoteOut{}, "", &userError{msg: msgCreatedRemoved}
+	}
+	if err = t.opts.Vault.ReplaceRaw(clean, in.Content, hash); err != nil {
 		return updateNoteOut{}, "", noteErr(err, clean)
 	}
 	return updateNoteOut{Path: clean, Hash: vault.HashContent(in.Content)}, "", nil

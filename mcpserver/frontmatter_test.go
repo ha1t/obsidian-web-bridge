@@ -60,3 +60,21 @@ func TestBuildFrontmatter_StripsDates(t *testing.T) {
 		t.Error("caller map mutated")
 	}
 }
+
+func TestFrontmatterHasCreated(t *testing.T) {
+	cases := map[string]bool{
+		"---\ncreated: 2026-01-01\n---\nbody\n":     true,
+		"---\r\ntags: [a]\r\ncreated: x\r\n---\r\n": true,
+		"\ufeff---\ncreated: x\n---\n":              true,
+		"---\ntags: [a]\n---\ncreated: x\n":         false, // 本文中
+		"---\n  created: x\n---\n":                  false, // ネストしたキー
+		"---\ncreated: x\n":                         false, // 閉じが無い
+		"created: x\n":                              false,
+		"":                                          false,
+	}
+	for in, want := range cases {
+		if got := frontmatterHasCreated(in); got != want {
+			t.Errorf("%q: got %v, want %v", in, got, want)
+		}
+	}
+}

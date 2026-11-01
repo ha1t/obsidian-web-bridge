@@ -114,6 +114,38 @@ func TestCreateRaw_MakesDirs(t *testing.T) {
 	}
 }
 
+func TestCaseConflictDir(t *testing.T) {
+	root := t.TempDir()
+	v := New(root)
+	if err := os.MkdirAll(filepath.Join(root, "Notes", "Sub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "Readme"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]string{
+		"a.md":                "",
+		"Notes/a.md":          "",
+		"Notes/Sub/a.md":      "",
+		"Notes/New/x/a.md":    "",
+		"notes/a.md":          "Notes",
+		"NOTES/x/y/a.md":      "Notes",
+		"Notes/sub/a.md":      "Notes/Sub",
+		"Notes/SUB/deep/a.md": "Notes/Sub",
+		"readme/a.md":         "", // 同名のファイルはフォルダの衝突として扱わない
+	}
+	for p, want := range cases {
+		got, err := v.CaseConflictDir(p)
+		if err != nil {
+			t.Errorf("%s: %v", p, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("%s: got %q, want %q", p, got, want)
+		}
+	}
+}
+
 func TestAppendRaw_PreservesFrontmatter(t *testing.T) {
 	v := New(t.TempDir())
 	fm := "---\nb: 1\na: 2\nmodified: 2026-01-01 10:00\n---\n"

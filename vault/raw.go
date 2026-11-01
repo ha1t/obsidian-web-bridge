@@ -226,6 +226,43 @@ func (v *Vault) CreateRaw(notePath, content string) error {
 	return v.writeNew(fp, content)
 }
 
+// CaseConflictDir は clean（CleanPath 済み）を作るときに新しく作られるディレクトリについて、
+// 名前が大文字小文字だけ違う既存の兄弟ディレクトリがあれば、その相対パス（スラッシュ区切り）を返す。
+// 無ければ ""。新しく作られる最初の階層より下には既存の兄弟が無いので、そこで検査を終える。
+func (v *Vault) CaseConflictDir(clean string) (string, error) {
+	if _, err := v.resolve(clean); err != nil {
+		return "", err
+	}
+	dir := path.Dir(clean)
+	if dir == "." {
+		return "", nil
+	}
+	cur := ""
+	for _, elem := range strings.Split(dir, "/") {
+		next := path.Join(cur, elem)
+		if _, err := os.Lstat(filepath.Join(v.rootPath, filepath.FromSlash(next))); err == nil {
+			cur = next
+			continue
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		entries, err := os.ReadDir(filepath.Join(v.rootPath, filepath.FromSlash(cur)))
+		if err != nil {
+			return "", err
+		}
+		for _, e := range entries {
+			if e.Name() != elem && strings.EqualFold(e.Name(), elem) {
+				fi, err := os.Stat(filepath.Join(v.rootPath, filepath.FromSlash(cur), e.Name()))
+				if err == nil && fi.IsDir() {
+					return path.Join(cur, e.Name()), nil
+				}
+			}
+		}
+		return "", nil
+	}
+	return "", nil
+}
+
 func (v *Vault) writeNew(fp, content string) error {
 	if err := os.MkdirAll(filepath.Dir(fp), 0755); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)

@@ -86,6 +86,7 @@ func buildInstructions(p *Policy) string {
 - 新規ノートは基本 Notes/<タイトル>.md に平置きします。関係する既存のノートやフォルダがあれば search_notes で探して、その近くに置いてください。新しいサブフォルダは作らないでください。
 - Web 記事の翻訳・要約は Clippings/<日本語タイトル>.md に置き、frontmatter の source に元の URL を入れてください。
 - update_note で全文を置き換えるときは、read_note で得た hash を必ず渡してください。
-- ファイル名に / \ : * ? " < > | は使わないでください。
+- ファイル名に / \ : * ? " < > | は使わず、末尾をドットや空白にしないでください。CON・NUL などの Windows の予約名も使えません。
+- 追記する内容にトップレベルの見出し（# ）は入れず、見出しは ## 以下を使ってください。
 - frontmatter の created / modified は Vault 側で自動で付くので、指定しないでください。`
 }

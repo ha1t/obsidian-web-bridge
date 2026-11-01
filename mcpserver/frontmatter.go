@@ -43,6 +43,27 @@ func BuildFrontmatter(given map[string]any, cleanPath string) map[string]any {
 	return out
 }
 
+// frontmatterHasCreated は content の先頭の frontmatter（--- で囲まれた部分）に
+// トップレベルの created: 行があるかを返す。CRLF と先頭の BOM も考慮する。
+// 閉じの --- が無ければ frontmatter とはみなさない。
+func frontmatterHasCreated(content string) bool {
+	lines := strings.Split(strings.TrimPrefix(content, "\ufeff"), "\n")
+	if len(lines) == 0 || strings.TrimRight(lines[0], "\r") != "---" {
+		return false
+	}
+	found := false
+	for _, l := range lines[1:] {
+		l = strings.TrimRight(l, "\r")
+		if l == "---" {
+			return found
+		}
+		if strings.HasPrefix(l, "created:") {
+			found = true
+		}
+	}
+	return false
+}
+
 func addTag(tags []any, tag string) []any {
 	for _, t := range tags {
 		if s, ok := t.(string); ok && s == tag {

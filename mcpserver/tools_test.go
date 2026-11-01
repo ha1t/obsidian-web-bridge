@@ -451,3 +451,201 @@ func TestHTTPHandler_RequiresJWT(t *testing.T) {
 		t.Errorf("valid token: status = %d, want 200", resp.StatusCode)
 	}
 }
+
+func TestCreateNote_UnsafeFilename(t *testing.T) {
+	cs, dir := newTestSession(t, testNow)
+	for _, p := range []string{
+		"Notes/a:b.md",
+		"Notes/a*b.md",
+		"Notes/a?b.md",
+		`Notes/a"b.md`,
+		"Notes/a<b.md",
+		"Notes/a>b.md",
+		"Notes/a|b.md",
+		"Notes/a\tb.md",
+		"Notes/sub./a.md",
+		"Notes/sub /a.md",
+		"Notes/CON.md",
+		"Notes/con.md",
+		"Notes/lpt1.md",
+		"Notes/Com9.md",
+		"Notes/nul.backup.md",
+		"aux/a.md",
+	} {
+		res := call(t, cs, "create_note", map[string]any{"path": p, "body": "b"})
+		mustErr(t, "create_note "+p, res, "ファイル名に使えない文字が含まれています")
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Errorf("nothing should be created: %v", entries)
+	}
+	// 予約名に似ているだけの名前は通る
+	for _, p := range []string{"Notes/CONSOLE.md", "Notes/COM10.md", "Notes/a.b.md"} {
+		mustOK(t, "create_note "+p, call(t, cs, "create_note", map[string]any{"path": p, "body": "b"}))
+	}
+}
+
+func TestCreateNote_CaseOnlyFolderClash(t *testing.T) {
+	cs, dir := newTestSession(t, testNow)
+	writeFile(t, dir, "Notes/x.md", "x\n")
+	writeFile(t, dir, "Notes/Sub/y.md", "y\n")
+
+	mustErr(t, "create_note", call(t, cs, "create_note", map[string]any{"path": "notes/a.md", "body": "b"}),
+		"フォルダ `Notes` が既にあります。大文字小文字を合わせてください")
+	mustErr(t, "create_note", call(t, cs, "create_note", map[string]any{"path": "Notes/sub/deeper/a.md", "body": "b"}),
+		"フォルダ `Notes/Sub` が既にあります")
+	if _, err := os.Stat(filepath.Join(dir, "notes")); err == nil {
+		t.Errorf("notes/ must not be created")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "Notes", "sub")); err == nil {
+		t.Errorf("Notes/sub/ must not be created")
+	}
+
+	// 新しいサブフォルダ（衝突なし）は作れる
+	mustOK(t, "create_note", call(t, cs, "create_note", map[string]any{"path": "Notes/新しいサブ/a.md", "body": "b"}))
+	if !strings.Contains(readFile(t, dir, "Notes/新しいサブ/a.md"), "b") {
+		t.Errorf("note not created")
+	}
+	// 既存フォルダに正しい大文字小文字で作るのは通る
+	mustOK(t, "create_note", call(t, cs, "create_note", map[string]any{"path": "Notes/Sub/z.md", "body": "b"}))
+}
+
+func TestWriteTools_NameTooLong(t *testing.T) {
+	cs, _ := newTestSession(t, testNow)
+	p := "Notes/" + strings.Repeat("a", 300) + ".md"
+	const want = "ファイル名が長すぎます。タイトルを短くしてください"
+	mustErr(t, "create_note", call(t, cs, "create_note", map[string]any{"path": p, "body": "b"}), want)
+	mustErr(t, "append_note", call(t, cs, "append_note", map[string]any{"path": p, "content": "c"}), want)
+	mustErr(t, "update_note", call(t, cs, "update_note", map[string]any{"path": p, "content": "c", "hash": "x"}), want)
+}
+
+func TestUpdateNote_EmptyContent(t *testing.T) {
+	cs, dir := newTestSession(t, testNow)
+	writeFile(t, dir, "Notes/a.md", "old\n")
+	for _, c := range []string{"", "  \n\t"} {
+		mustErr(t, "update_note", call(t, cs, "update_note", map[string]any{"path": "Notes/a.md", "content": c, "hash": vault.HashContent("old\n")}), "content が空です")
+	}
+	if got := readFile(t, dir, "Notes/a.md"); got != "old\n" {
+		t.Errorf("file changed: %q", got)
+	}
+}
+
+func TestUpdateNote_KeepsCreated(t *testing.T) {
+	cs, dir := newTestSession(t, testNow)
+	const wantMsg = "created 行が消えています。read_note の内容の frontmatter を保ったまま更新してください"
+	old := "---\ncreated: 2026-01-01T00:00\ntags: [a]\n---\n\nbody\n"
+	writeFile(t, dir, "Notes/a.md", old)
+	h := vault.HashContent(old)
+
+	for _, c := range []string{
+		"---\ntags: [a]\n---\n\nnew body\n",
+		"new body without frontmatter\n",
+	} {
+		mustErr(t, "update_note", call(t, cs, "update_note", map[string]any{"path": "Notes/a.md", "content": c, "hash": h}), wantMsg)
+	}
+	if got := readFile(t, dir, "Notes/a.md"); got != old {
+		t.Errorf("file changed: %q", got)
+	}
+
+	// created を保っていれば通る（CRLF でも）
+	keep := "---\r\ncreated: 2026-01-01T00:00\r\ntags: [a]\r\n---\r\n\r\nnew body\r\n"
+	mustOK(t, "update_note", call(t, cs, "update_note", map[string]any{"path": "Notes/a.md", "content": keep, "hash": h}))
+	if got := readFile(t, dir, "Notes/a.md"); got != keep {
+		t.Errorf("content = %q", got)
+	}
+
+	// もともと created が無いノートは created なしでも更新できる
+	oldB := "---\ntags: [a]\n---\nold\n"
+	writeFile(t, dir, "Notes/b.md", oldB)
+	mustOK(t, "update_note", call(t, cs, "update_note", map[string]any{"path": "Notes/b.md", "content": "plain\n", "hash": vault.HashContent(oldB)}))
+
+	// 本文中の created: は frontmatter の created とみなさない
+	oldC := "---\ncreated: 2026-01-01\n---\nx\n"
+	writeFile(t, dir, "Notes/c.md", oldC)
+	mustErr(t, "update_note", call(t, cs, "update_note", map[string]any{"path": "Notes/c.md", "content": "---\ntags: [a]\n---\ncreated: 2026-01-01\n", "hash": vault.HashContent(oldC)}), wantMsg)
+
+	// hash が古ければ created の検査より先に hash 不一致を返す
+	mustErr(t, "update_note", call(t, cs, "update_note", map[string]any{"path": "Notes/c.md", "content": "x\n", "hash": "deadbeef"}), "read_note で読み直して")
+}
+
+func TestAppendDailyMemo_InvalidDates(t *testing.T) {
+	cs, dir := newTestSession(t, testNow)
+	for _, d := range []string{"../x", "2026-02-30"} {
+		mustErr(t, "append_daily_memo", call(t, cs, "append_daily_memo", map[string]any{"content": "x", "date": d}), "YYYY-MM-DD")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "DailyNotes")); err == nil {
+		t.Errorf("DailyNotes must not be created")
+	}
+}
+
+func TestToolDescriptions_NoTopLevelHeading(t *testing.T) {
+	cs, _ := newTestSession(t, testNow)
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for _, tl := range res.Tools {
+		if tl.Name != "append_note" && tl.Name != "append_daily_memo" {
+			continue
+		}
+		seen++
+		if !strings.Contains(tl.Description, "## 以下") {
+			t.Errorf("%s description should mention top-level headings: %s", tl.Name, tl.Description)
+		}
+	}
+	if seen != 2 {
+		t.Errorf("seen = %d, want 2", seen)
+	}
+}
+
+// headerTransport はすべてのリクエストに Cf-Access-Jwt-Assertion を付ける。
+type headerTransport struct {
+	token string
+	base  http.RoundTripper
+}
+
+func (h *headerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Header.Set("Cf-Access-Jwt-Assertion", h.token)
+	return h.base.RoundTrip(r)
+}
+
+func TestHTTPHandler_E2E_ReadNote(t *testing.T) {
+	j := newTestJWKS(t)
+	dir := t.TempDir()
+	writeFile(t, dir, "Notes/hello.md", "---\ntags: [x]\n---\n\nこんにちは E2E\n")
+	ts := httptest.NewServer(NewHTTPHandler(testOptions(t, dir, testNow), newTestVerifier(j)))
+	defer ts.Close()
+
+	// / は JWT なしなら 403
+	resp, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("GET / without JWT: status = %d, want 403", resp.StatusCode)
+	}
+
+	hc := &http.Client{Transport: &headerTransport{token: j.Sign(t, validClaims()), base: http.DefaultTransport}}
+	client := mcp.NewClient(&mcp.Implementation{Name: "e2e", Version: "0"}, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cs, err := client.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint: ts.URL + "/mcp", HTTPClient: hc, MaxRetries: -1, DisableStandaloneSSE: true,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "read_note", Arguments: map[string]any{"path": "Notes/hello.md"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustOK(t, "read_note", res)
+	var out struct{ Path, Content string }
+	structured(t, res, &out)
+	if out.Path != "Notes/hello.md" || !strings.Contains(out.Content, "こんにちは E2E") {
+		t.Errorf("read_note = %+v", out)
+	}
+}
