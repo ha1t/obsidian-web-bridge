@@ -47,7 +47,7 @@ mcp:
   cf_access_team_domain: "<team>.cloudflareaccess.com"
   cf_access_aud: "<Application Audience Tag>"
   timezone: "Asia/Tokyo"          # DailyNote の「今日」の判定に使う
-  readonly_folders:               # 書き込み禁止フォルダ（Vault ルートからの相対）
+  readonly_folders:               # 書き込み禁止フォルダ（Vault 直下のフォルダ名。/ を含む指定は起動エラー）
     - DailyReports
     - MorningBrief
     - Calendar
@@ -63,12 +63,26 @@ mcp:
 ### サーバー側の手順
 
 1. `config.yaml` に上記の `mcp` セクションを追加する
-2. ビルドして再起動する: `go build -o obsidian-web-bridge . && systemctl --user restart obsidian-web-bridge`
-3. JWT なしで拒否されることを確認する: `curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:18485/mcp` が `403` になる
+2. Vault の `.gitignore` に `.owb-*.tmp` を追加する（書き込みは同じフォルダの一時ファイル経由で行うため、まれに残った一時ファイルをコミットしないように）
+3. ビルドして再起動する: `go build -o obsidian-web-bridge . && systemctl --user restart obsidian-web-bridge`
+4. JWT なしで拒否されることを確認する: `curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:18485/mcp` が `403` になる
 
-### Cloudflare 側の手順（ダッシュボードで実施）
+### Cloudflare 側の手順
 
-1. Tunnel に公開ホスト名を追加し、`http://localhost:18485` に向ける（ホスト名は任意に決める）
+1. Tunnel に公開ホスト名を追加し、`http://localhost:18485` に向ける（ホスト名は任意に決める）。Tunnel の管理方法によって手順が違う
+   - **ローカル管理の Tunnel**（`/etc/cloudflared/config.yml` に `ingress` を書いている場合）: `ingress` の最後の `- service: http_status:404` より前に次を足す
+
+     ```yaml
+     ingress:
+       # ...既存のルール...
+       - hostname: <ホスト名>
+         service: http://localhost:18485
+       - service: http_status:404
+     ```
+
+     DNS を登録して再起動する: `cloudflared tunnel route dns <tunnel名> <ホスト名>` → `sudo systemctl restart cloudflared`
+   - **ダッシュボード管理の Tunnel**: Zero Trust → Networks → Tunnels でその Tunnel の Public Hostname を追加し、`http://localhost:18485` に向ける。`localhost` はコネクタ（cloudflared）が動くマシンを指すので、その Tunnel のコネクタがこのサーバー上で動いている場合にだけ使える
+   - cloudflared を `loglevel: debug` で動かしているとリクエストヘッダー（JWT）がログに出ることがある。出ていないか確認し、普段は `info` にしておく
 2. Zero Trust → Access でそのホスト名のアプリを作り、Managed OAuth を有効化する。ポリシーは自分のメールのみ許可
 3. アプリの AUD タグとチームドメインを `config.yaml` の `mcp` に入れて再起動する
 4. claude.ai の設定 → コネクタ → カスタムコネクタ追加で `https://<ホスト名>/mcp` を登録する
