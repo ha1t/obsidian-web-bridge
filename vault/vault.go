@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 var (
@@ -23,10 +24,13 @@ func IsErrNotFound(err error) bool {
 
 type Vault struct {
 	rootPath string
+
+	locksMu sync.Mutex
+	locks   map[string]*sync.Mutex
 }
 
 func New(rootPath string) *Vault {
-	return &Vault{rootPath: rootPath}
+	return &Vault{rootPath: rootPath, locks: map[string]*sync.Mutex{}}
 }
 
 func (v *Vault) ValidatePath(notePath string) error {
