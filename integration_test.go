@@ -2,11 +2,17 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/ha1t/obsidian-web-bridge/cmd"
+	"github.com/ha1t/obsidian-web-bridge/config"
 	"github.com/ha1t/obsidian-web-bridge/server"
 	"github.com/ha1t/obsidian-web-bridge/vault"
 )
@@ -166,5 +172,126 @@ func TestIntegration_AuthRequired(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("No auth: code = %d, want 401", w.Code)
+	}
+}
+
+func freePort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port
+}
+
+func waitListening(t *testing.T, port int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 100*time.Millisecond)
+		if err == nil {
+			c.Close()
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("port %d did not start listening", port)
+}
+
+func isListening(port int) bool {
+	c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	c.Close()
+	return true
+}
+
+func startServers(t *testing.T, cfg *config.Config) (stop func()) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- cmd.RunServers(ctx, cfg) }()
+	return func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("RunServers returned error: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("RunServers did not stop after cancel")
+		}
+	}
+}
+
+func TestIntegration_MCPListenerRequiresJWT(t *testing.T) {
+	apiPort, mcpPort := freePort(t), freePort(t)
+	cfg := &config.Config{
+		VaultPath: t.TempDir(),
+		Port:      apiPort,
+		APIKey:    "test-key",
+		Bind:      "127.0.0.1",
+		MCP: &config.MCPConfig{
+			Bind:               "127.0.0.1",
+			Port:               mcpPort,
+			CFAccessTeamDomain: "example.cloudflareaccess.com",
+			CFAccessAUD:        "test-aud",
+			Timezone:           "Asia/Tokyo",
+			ReadonlyFolders:    config.DefaultReadonlyFolders,
+		},
+	}
+	stop := startServers(t, cfg)
+	defer stop()
+	waitListening(t, apiPort)
+	waitListening(t, mcpPort)
+
+	// 既存API: Bearerキー付きGETが従来どおり動く（存在しないノートは404）
+	req, _ := http.NewRequest("GET", fmt.Sprintf("http://127.0.0.1:%d/api/v1/notes?path=Notes/none.md", apiPort), nil)
+	req.Header.Set("Authorization", "Bearer test-key")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("API with key: code = %d, want 404", resp.StatusCode)
+	}
+	req.Header.Del("Authorization")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("API without key: code = %d, want 401", resp.StatusCode)
+	}
+
+	// MCP: JWT無しのPOST /mcp は403
+	resp, err = http.Post(fmt.Sprintf("http://127.0.0.1:%d/mcp", mcpPort), "application/json", bytes.NewReader([]byte(`{}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("MCP without JWT: code = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestIntegration_MCPDisabledWhenNotConfigured(t *testing.T) {
+	apiPort, mcpPort := freePort(t), freePort(t)
+	cfg := &config.Config{
+		VaultPath: t.TempDir(),
+		Port:      apiPort,
+		APIKey:    "test-key",
+		Bind:      "127.0.0.1",
+	}
+	stop := startServers(t, cfg)
+	defer stop()
+	waitListening(t, apiPort)
+
+	if isListening(mcpPort) {
+		t.Errorf("MCP port %d is listening although cfg.MCP == nil", mcpPort)
 	}
 }

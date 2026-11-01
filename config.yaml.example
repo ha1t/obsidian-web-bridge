@@ -3,3 +3,19 @@ vault_path: /path/to/your/ObsidianVault
 port: 18484
 api_key: "change-me-to-a-secure-key"
 bind: "0.0.0.0"
+
+# リモートMCP（claude.ai カスタムコネクタ）。このセクションがあるときだけ MCP リスナーが起動する
+mcp:
+  bind: "127.0.0.1"
+  port: 18485
+  cf_access_team_domain: "<team>.cloudflareaccess.com"
+  cf_access_aud: "<Application Audience Tag>"
+  timezone: "Asia/Tokyo"          # DailyNote の「今日」の判定に使う
+  readonly_folders:               # 書き込み禁止フォルダ（Vault ルートからの相対）
+    - DailyReports
+    - MorningBrief
+    - Calendar
+    - Garmin
+    - MonthlyReview
+    - Templates
+    - bases
