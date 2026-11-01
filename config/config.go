@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -84,6 +85,25 @@ func applyMCPDefaults(m *MCPConfig) error {
 	if m.ReadonlyFolders == nil {
 		m.ReadonlyFolders = append([]string(nil), DefaultReadonlyFolders...)
 	}
+	folders, err := normalizeReadonlyFolders(m.ReadonlyFolders)
+	if err != nil {
+		return err
+	}
+	m.ReadonlyFolders = folders
 
 	return nil
+}
+
+// normalizeReadonlyFolders は前後の空白と / を取り除く。
+// 空になる項目や、途中に / を含む項目（Vault 直下のフォルダ名でないもの）はエラーにする。
+func normalizeReadonlyFolders(in []string) ([]string, error) {
+	out := make([]string, 0, len(in))
+	for _, f := range in {
+		n := strings.Trim(strings.TrimSpace(f), "/")
+		if n == "" || strings.Contains(n, "/") {
+			return nil, fmt.Errorf("mcp.readonly_folders: invalid entry %q (must be a top-level folder name)", f)
+		}
+		out = append(out, n)
+	}
+	return out, nil
 }

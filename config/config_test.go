@@ -173,3 +173,37 @@ func TestLoad_MCPReadonlyOverride(t *testing.T) {
 		t.Errorf("MCP.ReadonlyFolders = %v, want %v", cfg.MCP.ReadonlyFolders, want)
 	}
 }
+
+func TestLoad_MCPReadonlyNormalize(t *testing.T) {
+	content := baseConfigYAML + `mcp:
+  cf_access_team_domain: example.cloudflareaccess.com
+  cf_access_aud: aud-123
+  readonly_folders: [" Foo ", "/Bar/", "Baz"]
+`
+	cfg, err := Load(writeTestConfig(t, content))
+	if err != nil {
+		t.Fatalf("Load失敗: %v", err)
+	}
+	want := []string{"Foo", "Bar", "Baz"}
+	if !reflect.DeepEqual(cfg.MCP.ReadonlyFolders, want) {
+		t.Errorf("MCP.ReadonlyFolders = %v, want %v", cfg.MCP.ReadonlyFolders, want)
+	}
+}
+
+func TestLoad_MCPReadonlyInvalid(t *testing.T) {
+	for _, entry := range []string{`""`, `"  "`, `"/"`, `"a/b"`, `"/a/b/"`} {
+		content := baseConfigYAML + `mcp:
+  cf_access_team_domain: example.cloudflareaccess.com
+  cf_access_aud: aud-123
+  readonly_folders: [Foo, ` + entry + `]
+`
+		_, err := Load(writeTestConfig(t, content))
+		if err == nil {
+			t.Errorf("entry %s: エラーを期待したが nil", entry)
+			continue
+		}
+		if !strings.Contains(err.Error(), "readonly_folders") || !strings.Contains(err.Error(), entry) {
+			t.Errorf("entry %s: error should name the entry: %v", entry, err)
+		}
+	}
+}
