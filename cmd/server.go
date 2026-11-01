@@ -130,7 +130,14 @@ func RunServers(ctx context.Context, cfg *config.Config) error {
 			return err
 		}
 		fmt.Printf("Starting MCP server on %s (/mcp)\n", mcpAddr)
-		entries = append(entries, entry{&http.Server{Handler: handler}, mcpLn})
+		// インターネットに公開されるので、ヘッダー受信とアイドル接続に上限を付ける。
+		// ツールの応答を途中で切らないよう WriteTimeout は付けない。
+		mcpSrv := &http.Server{
+			Handler:           handler,
+			ReadHeaderTimeout: 10 * time.Second,
+			IdleTimeout:       120 * time.Second,
+		}
+		entries = append(entries, entry{mcpSrv, mcpLn})
 	}
 
 	errCh := make(chan error, len(entries))

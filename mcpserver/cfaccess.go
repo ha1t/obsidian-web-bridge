@@ -118,8 +118,11 @@ func (a *AccessVerifier) keyFor(ctx context.Context, kid string) (*rsa.PublicKey
 	return nil, fmt.Errorf("unknown kid %q", kid)
 }
 
+// fetchKeys は JWKS を取得する。リクエスト元のクライアントが切断しても取得は続ける
+// （途中で止めると失敗扱いになり、1 分間のクールダウンで後続の正当なリクエストまで拒否してしまうため）。
+// 代わりに独自の 10 秒タイムアウトで打ち切る。
 func (a *AccessVerifier) fetchKeys(ctx context.Context) (map[string]*rsa.PublicKey, error) {
-	ctx, cancel := context.WithTimeout(ctx, jwksFetchTimeout)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), jwksFetchTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.certsURL, nil)
 	if err != nil {

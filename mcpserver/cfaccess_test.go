@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
@@ -320,5 +321,24 @@ func TestVerifier_NoRefetchWhenKidKnown(t *testing.T) {
 	}
 	if n := j.Requests.Load(); n != 1 {
 		t.Fatalf("requests = %d, want 1", n)
+	}
+}
+
+// クライアントが切断済み（ctx キャンセル済み）でも JWKS の初回取得は完了し、
+// 失敗扱いのクールダウンに入らないこと。
+func TestVerifier_FetchSurvivesCancelledRequest(t *testing.T) {
+	j := newTestJWKS(t)
+	v := newTestVerifier(j)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := v.Verify(ctx, j.Sign(t, validClaims())); err != nil {
+		t.Fatalf("verify with cancelled ctx: %v", err)
+	}
+	if n := j.Requests.Load(); n != 1 {
+		t.Fatalf("jwks requests = %d, want 1", n)
+	}
+	h := v.Middleware(okHandler())
+	if rec := doRequest(h, j.Sign(t, validClaims())); rec.Code != http.StatusOK {
+		t.Fatalf("following request: status = %d, want 200", rec.Code)
 	}
 }
