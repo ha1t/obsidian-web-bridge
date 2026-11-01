@@ -32,35 +32,55 @@ func HashContent(content string) string {
 
 // CleanPath はノートパスを正規化・検証し、スラッシュ区切りの相対パスを返す。
 func (v *Vault) CleanPath(notePath string) (string, error) {
-	if notePath == "" {
+	p, err := cleanRel(notePath, false)
+	if err != nil {
+		return "", err
+	}
+	if path.Ext(p) != ".md" {
+		return "", fmt.Errorf("only .md files allowed: %s", notePath)
+	}
+	return p, nil
+}
+
+// cleanFolder はフォルダパスを CleanPath と同じ規則（.md の検査なし）で正規化する。"" は Vault ルート。
+func (v *Vault) cleanFolder(folder string) (string, error) {
+	return cleanRel(folder, true)
+}
+
+// cleanRel は相対パスの共通検証。allowRoot が真なら空（ルート）を許す。
+func cleanRel(in string, allowRoot bool) (string, error) {
+	if in == "" {
+		if allowRoot {
+			return "", nil
+		}
 		return "", fmt.Errorf("path is empty")
 	}
-	p := strings.ReplaceAll(notePath, "\\", "/")
+	p := strings.ReplaceAll(in, "\\", "/")
 	if strings.ContainsRune(p, 0) {
 		return "", fmt.Errorf("invalid path")
 	}
 	if strings.HasPrefix(p, "/") {
-		return "", fmt.Errorf("absolute path not allowed: %s", notePath)
+		return "", fmt.Errorf("absolute path not allowed: %s", in)
 	}
 	if len(p) >= 2 && p[1] == ':' { // Windows ドライブレター
-		return "", fmt.Errorf("absolute path not allowed: %s", notePath)
+		return "", fmt.Errorf("absolute path not allowed: %s", in)
 	}
 	for _, elem := range strings.Split(p, "/") {
 		if elem == ".." {
-			return "", fmt.Errorf("path traversal not allowed: %s", notePath)
+			return "", fmt.Errorf("path traversal not allowed: %s", in)
 		}
 	}
 	p = path.Clean(p)
+	if p == "." && allowRoot {
+		return "", nil
+	}
 	if p == "." || strings.HasPrefix(p, "/") {
-		return "", fmt.Errorf("invalid path: %s", notePath)
+		return "", fmt.Errorf("invalid path: %s", in)
 	}
 	for _, elem := range strings.Split(p, "/") {
 		if strings.HasPrefix(elem, ".") {
-			return "", fmt.Errorf("hidden path element not allowed: %s", notePath)
+			return "", fmt.Errorf("hidden path element not allowed: %s", in)
 		}
-	}
-	if path.Ext(p) != ".md" {
-		return "", fmt.Errorf("only .md files allowed: %s", notePath)
 	}
 	return p, nil
 }
