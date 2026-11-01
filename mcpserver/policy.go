@@ -40,3 +40,8 @@ func (p *Policy) Classify(cleanPath string) FolderClass {
 	}
 	return FolderWritable
 }
+
+// ReadonlyFolders は読み取り専用フォルダ名の一覧のコピーを返す。
+func (p *Policy) ReadonlyFolders() []string {
+	return append([]string(nil), p.readonly...)
+}
