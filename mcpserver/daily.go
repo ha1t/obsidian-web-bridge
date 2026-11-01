@@ -62,33 +62,30 @@ func RenderDailyNote(date time.Time) string {
 func AppendMemo(text, content string) string {
 	const memo = "# Memo"
 	if !vault.HasHeading(text, memo) {
-		if vault.HasHeading(text, "# Smartphone") {
-			text = insertBeforeHeading(text, "# Smartphone", memo+"\n")
+		if idx, ok := vault.HeadingLine(text, "# Smartphone"); ok {
+			text = insertHeadingAt(text, idx, memo)
 		} else {
 			text = vault.AppendToEnd(text, memo)
 		}
 	}
 	out, err := vault.AppendToSection(text, memo, content)
 	if err != nil {
-		// 直前で見出しを保証しているため通常は到達しない
-		return vault.AppendToEnd(text, content)
+		// 見出しを保証できなかった場合も、見出しごと末尾に追記する
+		return vault.AppendToEnd(text, memo+"\n\n"+content)
 	}
 	return out
 }
 
-// insertBeforeHeading はフェンス外の最初の heading 行の直前に line を挿入する。
-func insertBeforeHeading(text, heading, line string) string {
-	lines := strings.SplitAfter(text, "\n")
-	inFence := false
-	for i, l := range lines {
-		t := strings.TrimLeft(l, " ")
-		if strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
-			inFence = !inFence
-			continue
-		}
-		if !inFence && strings.TrimRight(l, "\r\n") == heading {
-			return strings.Join(lines[:i], "") + line + strings.Join(lines[i:], "")
-		}
+// insertHeadingAt は idx 行目の直前に heading 行を挿入する。直前が空行でなければ空行を足す。
+func insertHeadingAt(text string, idx int, heading string) string {
+	eol := "\n"
+	if strings.Contains(text, "\r\n") {
+		eol = "\r\n"
 	}
-	return text
+	lines := strings.SplitAfter(text, "\n")
+	before := strings.Join(lines[:idx], "")
+	if idx > 0 && strings.TrimSpace(lines[idx-1]) != "" {
+		before += eol
+	}
+	return before + heading + eol + strings.Join(lines[idx:], "")
 }

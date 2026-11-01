@@ -133,6 +133,22 @@ func AppendToEnd(text, content string) string {
 	return body + eol + eol + added
 }
 
+// HeadingLine は heading がフェンス外に最初に現れる行の添字(0始まり、"\n" 区切り)を返す。
+func HeadingLine(text, heading string) (int, bool) {
+	hl, ht, ok := parseHeading(heading)
+	if !ok {
+		return 0, false
+	}
+	lines := strings.Split(text, "\n")
+	levels, texts := headingLevels(lines)
+	for i := range lines {
+		if levels[i] == hl && texts[i] == ht {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
 // HasHeading は heading がフェンス外に存在するかを返す。
 func HasHeading(text, heading string) bool {
 	hl, ht, ok := parseHeading(heading)

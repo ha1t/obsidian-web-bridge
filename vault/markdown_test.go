@@ -132,3 +132,13 @@ func TestHasHeading(t *testing.T) {
 		t.Error("fenced")
 	}
 }
+
+func TestHeadingLine(t *testing.T) {
+	text := "a\n```\n# X\n```\n#  X  \n"
+	if i, ok := HeadingLine(text, "# X"); !ok || i != 4 {
+		t.Errorf("got %d %v", i, ok)
+	}
+	if _, ok := HeadingLine(text, "# Y"); ok {
+		t.Error("unexpected")
+	}
+}

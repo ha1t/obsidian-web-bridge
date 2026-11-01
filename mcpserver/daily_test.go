@@ -69,6 +69,45 @@ func TestAppendMemo_ToTemplate(t *testing.T) {
 	}
 }
 
+func TestAppendMemo_SmartphoneTrailingSpace(t *testing.T) {
+	got := AppendMemo("# Diary\n日記\n\n# Smartphone \n\nx\n", "メモ")
+	want := "# Diary\n日記\n\n# Memo\n\nメモ\n\n# Smartphone \n\nx\n"
+	if got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
+func TestAppendMemo_NonBlankBeforeSmartphone(t *testing.T) {
+	got := AppendMemo("# Diary\n日記\n# Smartphone\nx\n", "メモ")
+	want := "# Diary\n日記\n\n# Memo\n\nメモ\n\n# Smartphone\nx\n"
+	if got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+	got = AppendMemo("# Diary\r\n日記\r\n# Smartphone\r\nx\r\n", "メモ")
+	want = "# Diary\r\n日記\r\n\r\n# Memo\r\n\r\nメモ\r\n\r\n# Smartphone\r\nx\r\n"
+	if got != want {
+		t.Errorf("crlf got %q want %q", got, want)
+	}
+}
+
+func TestAppendMemo_ExistingMemoContent(t *testing.T) {
+	in := "# Diary\n日記\n\n# Memo\n\n既存\n\n# Smartphone\n\nx\n"
+	got := AppendMemo(in, "新規")
+	want := "# Diary\n日記\n\n# Memo\n\n既存\n\n新規\n\n# Smartphone\n\nx\n"
+	if got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
+func TestAppendMemo_SmartphoneInFenceIgnored(t *testing.T) {
+	in := "# Diary\n```\n# Smartphone\n```\n"
+	got := AppendMemo(in, "メモ")
+	want := "# Diary\n```\n# Smartphone\n```\n\n# Memo\n\nメモ\n"
+	if got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
 func TestAppendMemo_NoMemoHeading(t *testing.T) {
 	got := AppendMemo("# Diary\n日記\n\n# Smartphone\n\nx\n", "メモ")
 	want := "# Diary\n日記\n\n# Memo\n\nメモ\n\n# Smartphone\n\nx\n"
