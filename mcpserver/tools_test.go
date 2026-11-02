@@ -130,15 +130,15 @@ func TestListTools(t *testing.T) {
 	for _, tl := range res.Tools {
 		tools[tl.Name] = tl
 	}
-	for _, name := range []string{"list_notes", "search_notes", "read_note", "create_note", "append_note", "update_note", "append_daily_memo"} {
+	for _, name := range []string{"list_notes", "search_notes", "read_note", "create_note", "append_note", "update_note", "append_daily_memo", "vault_stats"} {
 		if tools[name] == nil {
 			t.Errorf("tool %s missing", name)
 		}
 	}
-	if len(tools) != 7 {
-		t.Errorf("tool count = %d, want 7", len(tools))
+	if len(tools) != 8 {
+		t.Errorf("tool count = %d, want 8", len(tools))
 	}
-	for _, name := range []string{"list_notes", "search_notes", "read_note"} {
+	for _, name := range []string{"list_notes", "search_notes", "read_note", "vault_stats"} {
 		if a := tools[name].Annotations; a == nil || !a.ReadOnlyHint {
 			t.Errorf("%s should be readOnly", name)
 		}
@@ -647,5 +647,66 @@ func TestHTTPHandler_E2E_ReadNote(t *testing.T) {
 	structured(t, res, &out)
 	if out.Path != "Notes/hello.md" || !strings.Contains(out.Content, "こんにちは E2E") {
 		t.Errorf("read_note = %+v", out)
+	}
+}
+
+func TestVaultStats(t *testing.T) {
+	cs, dir := newTestSession(t, testNow)
+	writeFile(t, dir, "Notes/a.md", strings.Repeat("x", 10))
+	writeFile(t, dir, "Attachments/p.png", strings.Repeat("x", 2048))
+	writeFile(t, dir, ".git/HEAD", strings.Repeat("x", 100))
+	writeFile(t, dir, ".obsidian/app.json", strings.Repeat("x", 5))
+
+	res := call(t, cs, "vault_stats", map[string]any{})
+	mustOK(t, "vault_stats", res)
+	type count struct {
+		Files int
+		Bytes int64
+		Size  string
+	}
+	var out struct {
+		Folders []struct {
+			Name     string
+			Files    int
+			Bytes    int64
+			Size     string
+			Markdown count
+			Image    count
+			PDF      count
+			Other    count
+		}
+		Git    count
+		Hidden count
+		Total  count
+	}
+	structured(t, res, &out)
+	if len(out.Folders) != 2 || out.Folders[0].Name != "Attachments" || out.Folders[1].Name != "Notes" {
+		t.Fatalf("folders = %+v", out.Folders)
+	}
+	att := out.Folders[0]
+	if att.Files != 1 || att.Bytes != 2048 || att.Size != "2.0 KB" || att.Image.Files != 1 || att.Markdown.Files != 0 {
+		t.Errorf("Attachments = %+v", att)
+	}
+	if out.Folders[1].Markdown != (count{1, 10, "10 B"}) {
+		t.Errorf("Notes = %+v", out.Folders[1])
+	}
+	if out.Git != (count{1, 100, "100 B"}) || out.Hidden.Bytes != 5 || out.Total.Files != 4 || out.Total.Bytes != 2163 {
+		t.Errorf("git=%+v hidden=%+v total=%+v", out.Git, out.Hidden, out.Total)
+	}
+}
+
+func TestFormatSize(t *testing.T) {
+	for in, want := range map[int64]string{
+		0:          "0 B",
+		1023:       "1023 B",
+		1024:       "1.0 KB",
+		1536:       "1.5 KB",
+		5 << 30:    "5.0 GB",
+		7408818585: "6.9 GB",
+		3 << 40:    "3.0 TB",
+	} {
+		if got := formatSize(in); got != want {
+			t.Errorf("formatSize(%d) = %q, want %q", in, got, want)
+		}
 	}
 }

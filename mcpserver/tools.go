@@ -153,6 +153,11 @@ func registerTools(s *mcp.Server, t *tools) {
 		Description: DailyNotesDir + "/<日付>.md の # Memo セクションの末尾に追記します。ノートが無ければテンプレートから作ってから追記します。content にトップレベルの見出し（# ）は入れず、見出しは ## 以下を使ってください（DailyNote のセクション構造が崩れるため）。",
 		Annotations: writeAnnotations,
 	}, t.appendDailyMemo)
+	addTool(s, &mcp.Tool{
+		Name:        "vault_stats",
+		Description: "Vault の容量を集計します。直下のフォルダごとのファイル数と合計サイズ（Markdown・画像・PDF・その他の内訳つき）、.git の合計、.git 以外の隠しフォルダ（.obsidian など）の合計、全体の合計を返します。サイズはファイルの見かけのサイズで、シンボリックリンクは数えません。",
+		Annotations: readOnlyAnnotations,
+	}, t.vaultStats)
 }
 
 // ---- 入出力 ----
@@ -236,6 +241,32 @@ type appendDailyMemoIn struct {
 type appendDailyMemoOut struct {
 	Path    string `json:"path"`
 	Created bool   `json:"created" jsonschema:"DailyNote を新しく作ったか"`
+}
+
+type vaultStatsIn struct{}
+
+type countOut struct {
+	Files int    `json:"files"`
+	Bytes int64  `json:"bytes"`
+	Size  string `json:"size" jsonschema:"人が読む形のサイズ（例: 1.5 GB）"`
+}
+
+type folderStatsOut struct {
+	Name     string   `json:"name" jsonschema:"Vault 直下のフォルダ名。直下のファイルは (root)"`
+	Files    int      `json:"files"`
+	Bytes    int64    `json:"bytes"`
+	Size     string   `json:"size"`
+	Markdown countOut `json:"markdown"`
+	Image    countOut `json:"image"`
+	PDF      countOut `json:"pdf"`
+	Other    countOut `json:"other"`
+}
+
+type vaultStatsOut struct {
+	Folders []folderStatsOut `json:"folders" jsonschema:"サイズの大きい順"`
+	Git     countOut         `json:"git" jsonschema:".git の合計"`
+	Hidden  countOut         `json:"hidden" jsonschema:".git 以外のドットで始まるフォルダ・ファイルの合計"`
+	Total   countOut         `json:"total" jsonschema:"すべての合計"`
 }
 
 // ---- 共通処理 ----
@@ -356,6 +387,47 @@ func (t *tools) readNote(_ context.Context, in pathIn) (readNoteOut, string, err
 	out := readNoteOut{Path: n.Path, Content: n.Content, Hash: n.Hash, Modified: t.formatTime(n.Modified)}
 	if fm, _, err := vault.UnmarshalNote(n.Content); err == nil {
 		out.Frontmatter = &fm
+	}
+	return out, "", nil
+}
+
+// formatSize はバイト数を 1024 単位の読みやすい文字列にする。
+func formatSize(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	v := float64(b) / unit
+	units := []string{"KB", "MB", "GB", "TB"}
+	i := 0
+	for v >= unit && i < len(units)-1 {
+		v /= unit
+		i++
+	}
+	return fmt.Sprintf("%.1f %s", v, units[i])
+}
+
+func toCountOut(c vault.Count) countOut {
+	return countOut{Files: c.Files, Bytes: c.Bytes, Size: formatSize(c.Bytes)}
+}
+
+func (t *tools) vaultStats(_ context.Context, _ vaultStatsIn) (vaultStatsOut, string, error) {
+	s, err := t.opts.Vault.Stats()
+	if err != nil {
+		return vaultStatsOut{}, "", err
+	}
+	out := vaultStatsOut{
+		Folders: make([]folderStatsOut, 0, len(s.Folders)),
+		Git:     toCountOut(s.Git),
+		Hidden:  toCountOut(s.Hidden),
+		Total:   toCountOut(s.Total),
+	}
+	for _, f := range s.Folders {
+		out.Folders = append(out.Folders, folderStatsOut{
+			Name: f.Name, Files: f.Files, Bytes: f.Bytes, Size: formatSize(f.Bytes),
+			Markdown: toCountOut(f.Markdown), Image: toCountOut(f.Image),
+			PDF: toCountOut(f.PDF), Other: toCountOut(f.Other),
+		})
 	}
 	return out, "", nil
 }
