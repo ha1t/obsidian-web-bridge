@@ -98,6 +98,7 @@ mcp:
 | `append_note` | ノート末尾、または指定した見出しのセクション末尾に追記する |
 | `update_note` | `read_note` で得た `hash` が一致するときだけ全文を置換する |
 | `append_daily_memo` | `DailyNotes/<日付>.md` の `# Memo` セクションに追記する（無ければテンプレートから作成） |
+| `vault_stats` | 直下のフォルダごとのファイル数・合計サイズ（Markdown/画像/PDF/その他の内訳つき）と、`.git`・その他の隠しフォルダ・全体の合計を返す |
 
 `readonly_folders` と `DailyNotes` への書き込みは、`append_daily_memo` 以外では拒否される。
 `.git` や `.obsidian` など `.` で始まるディレクトリは読み書き・一覧・検索の対象外。
